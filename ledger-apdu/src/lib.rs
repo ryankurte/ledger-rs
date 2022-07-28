@@ -44,6 +44,17 @@ pub struct APDUCommand<B> {
     pub data: B,
 }
 
+impl<B> APDUCommand<B>
+where
+    B: Deref<Target = [u8]> + Default,
+{
+    /// Create a new ADPU with the provided class and instruction.
+    /// Note this sets p1, p2, and data to 0
+    pub fn new(cla: u8, ins: u8) -> Self {
+        Self{ cla, ins, p1: 0, p2: 0, data: Default::default() }
+    }
+}
+
 #[cfg(feature = "std")]
 impl<B> APDUCommand<B>
 where

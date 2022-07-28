@@ -5,7 +5,9 @@ members = [
     "ledger-transport",
     "ledger-transport-hid",
     "ledger-transport-zemu",
+    "ledger-transport-tcp",
     "ledger-zondax-generic",
+    "ledger-cli",
 ]
 
 exclude = []
@@ -20,4 +22,5 @@ ledger-apdu = { path = "ledger-apdu" }
 ledger-transport = { path = "ledger-transport" }
 ledger-transport-hid = { path = "ledger-transport-hid" }
 ledger-transport-zemu = { path = "ledger-transport-zemu" }
+ledger-transport-tcp = { path = "ledger-transport-tcp" }
 ledger-zondax-generic = { path = "ledger-zondax-generic" }

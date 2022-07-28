@@ -65,198 +65,11 @@ pub struct Version {
     pub target_id: [u8; 4],
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
-/// App Information
-pub struct AppInfo {
-    /// Name of the application
-    #[serde(rename(serialize = "appName"))]
-    pub app_name: String,
-    /// App version
-    #[serde(rename(serialize = "appVersion"))]
-    pub app_version: String,
-    /// Flag length
-    #[serde(rename(serialize = "flagLen"))]
-    pub flag_len: u8,
-    /// Flag value
-    #[serde(rename(serialize = "flagsValue"))]
-    pub flags_value: u8,
-    /// Flag Recovery
-    #[serde(rename(serialize = "flagsRecovery"))]
-    pub flag_recovery: bool,
-    /// Flag Signed MCU code
-    #[serde(rename(serialize = "flagsSignedMCUCode"))]
-    pub flag_signed_mcu_code: bool,
-    /// Flag Onboarded
-    #[serde(rename(serialize = "flagsOnboarded"))]
-    pub flag_onboarded: bool,
-    /// Flag Pin Validated
-    #[serde(rename(serialize = "flagsPINValidated"))]
-    pub flag_pin_validated: bool,
-}
+impl TryFrom<&[u8]> for Version {
+    type Error = DecodeError;
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
-/// App Device Info
-pub struct DeviceInfo {
-    /// Target ID
-    #[serde(rename(serialize = "targetId"))]
-    pub target_id: [u8; 4],
-    /// Secure Element Version
-    #[serde(rename(serialize = "seVersion"))]
-    pub se_version: String,
-    /// Device Flag
-    pub flag: Vec<u8>,
-    /// MCU Version
-    #[serde(rename(serialize = "mcuVersion"))]
-    pub mcu_version: String,
-}
-
-/// Defines what we can consider an "App"
-pub trait App {
-    /// App's APDU CLA
-    const CLA: u8;
-}
-
-#[async_trait]
-/// Common commands for any given APP
-///
-/// This trait is automatically implemented for any type that implements [App]
-pub trait AppExt<E>: App
-where
-    E: Exchange + Send + Sync,
-    E::Error: std::error::Error,
-{
-    /// Retrieve the device info
-    ///
-    /// Works only in the dashboard
-    async fn get_device_info(transport: &E) -> Result<DeviceInfo, LedgerAppError<E::Error>> {
-        let command = APDUCommand {
-            cla: CLA_DEVICE_INFO,
-            ins: INS_DEVICE_INFO,
-            p1: 0x00,
-            p2: 0x00,
-            data: Vec::new(),
-        };
-
-        let response = transport.exchange(&command).await?;
-        match response.error_code() {
-            Ok(APDUErrorCode::NoError) => {}
-            Ok(err) => return Err(LedgerAppError::Unknown(err as _)),
-            Err(err) => return Err(LedgerAppError::Unknown(err)),
-        }
-
-        let response_data = response.data();
-
-        let target_id_slice = &response_data[0..4];
-        let mut idx = 4;
-        let se_version_len: usize = response_data[idx] as usize;
-        idx += 1;
-        let se_version_bytes = &response_data[idx..idx + se_version_len];
-
-        idx += se_version_len;
-
-        let flags_len: usize = response_data[idx] as usize;
-        idx += 1;
-        let flag = &response_data[idx..idx + flags_len];
-        idx += flags_len;
-
-        let mcu_version_len: usize = response_data[idx] as usize;
-        idx += 1;
-        let mut tmp = &response_data[idx..idx + mcu_version_len];
-        if tmp[mcu_version_len - 1] == 0 {
-            tmp = &response_data[idx..idx + mcu_version_len - 1];
-        }
-
-        let mut target_id = [Default::default(); 4];
-        target_id.copy_from_slice(target_id_slice);
-
-        let se_version = str::from_utf8(se_version_bytes).map_err(|_e| LedgerAppError::Utf8)?;
-        let mcu_version = str::from_utf8(tmp).map_err(|_e| LedgerAppError::Utf8)?;
-
-        let device_info = DeviceInfo {
-            target_id,
-            se_version: se_version.to_string(),
-            flag: flag.to_vec(),
-            mcu_version: mcu_version.to_string(),
-        };
-
-        Ok(device_info)
-    }
-
-    /// Retrieve the app info
-    ///
-    /// Works only in app (TOOD: dashboard support)
-    async fn get_app_info(transport: &E) -> Result<AppInfo, LedgerAppError<E::Error>> {
-        let command = APDUCommand {
-            cla: CLA_APP_INFO,
-            ins: INS_APP_INFO,
-            p1: 0x00,
-            p2: 0x00,
-            data: Vec::new(),
-        };
-
-        let response = transport.exchange(&command).await?;
-        match response.error_code() {
-            Ok(APDUErrorCode::NoError) => {}
-            Ok(err) => return Err(LedgerAppError::AppSpecific(err as _, err.description())),
-            Err(err) => return Err(LedgerAppError::Unknown(err as _)),
-        }
-
-        let response_data = response.data();
-
-        if response_data[0] != 1 {
-            return Err(LedgerAppError::InvalidFormatID);
-        }
-
-        let app_name_len: usize = response_data[1] as usize;
-        let app_name_bytes = &response_data[2..app_name_len];
-
-        let mut idx = 2 + app_name_len;
-        let app_version_len: usize = response_data[idx] as usize;
-        idx += 1;
-        let app_version_bytes = &response_data[idx..idx + app_version_len];
-
-        idx += app_version_len;
-
-        let app_flags_len = response_data[idx];
-        idx += 1;
-        let flags_value = response_data[idx];
-
-        let app_name = str::from_utf8(app_name_bytes).map_err(|_e| LedgerAppError::Utf8)?;
-        let app_version = str::from_utf8(app_version_bytes).map_err(|_e| LedgerAppError::Utf8)?;
-
-        let app_info = AppInfo {
-            app_name: app_name.to_string(),
-            app_version: app_version.to_string(),
-            flag_len: app_flags_len,
-            flags_value,
-            flag_recovery: (flags_value & 1) != 0,
-            flag_signed_mcu_code: (flags_value & 2) != 0,
-            flag_onboarded: (flags_value & 4) != 0,
-            flag_pin_validated: (flags_value & 128) != 0,
-        };
-
-        Ok(app_info)
-    }
-
-    /// Retrieve the app version
-    async fn get_version(transport: &E) -> Result<Version, LedgerAppError<E::Error>> {
-        let command = APDUCommand {
-            cla: Self::CLA,
-            ins: INS_GET_VERSION,
-            p1: 0x00,
-            p2: 0x00,
-            data: Vec::new(),
-        };
-
-        let response = transport.exchange(&command).await?;
-        match response.error_code() {
-            Ok(APDUErrorCode::NoError) => {}
-            Ok(err) => return Err(LedgerAppError::Unknown(err as _)),
-            Err(err) => return Err(LedgerAppError::Unknown(err)),
-        }
-
-        let response_data = response.data();
-
+    /// Parse an app version object from APDU response data
+    fn try_from(response_data: &[u8]) -> Result<Self, Self::Error> {
         let version = match response_data.len() {
             // single byte version numbers
             4 => Version {
@@ -304,8 +117,265 @@ where
                     response_data[11],
                 ],
             },
-            _ => return Err(LedgerAppError::InvalidVersion),
+            _ => return Err(DecodeError::InvalidVersion),
         };
+
+        Ok(version)
+    }
+}
+
+/// Decode errors for use with[`TryFrom`] implementations
+#[derive(Clone, PartialEq, Debug, thiserror::Error)]
+pub enum DecodeError {
+    /// UTF8 parsing failed
+    #[error("UTF8 parsing failed: {0}")]
+    Utf8(std::str::Utf8Error),
+
+    /// Invalid format ID
+    #[error("Invalid format ID: {0}")]
+    InvalidFormatId(u8),
+
+    /// Invalid app version
+    #[error("Invalid app version")]
+    InvalidVersion
+}
+
+impl DecodeError {
+    /// Convert from [`DecodeError`] to type constrained [`LedgerAppError`]
+    fn convert<E: std::error::Error>(self) -> LedgerAppError<E> {
+        match self {
+            DecodeError::Utf8(_) => LedgerAppError::Utf8,
+            DecodeError::InvalidFormatId(_) => LedgerAppError::InvalidFormatID,
+            DecodeError::InvalidVersion => LedgerAppError::InvalidVersion,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+/// App Information
+pub struct AppInfo {
+    /// Name of the application
+    #[serde(rename(serialize = "appName"))]
+    pub app_name: String,
+    /// App version
+    #[serde(rename(serialize = "appVersion"))]
+    pub app_version: String,
+    /// Flag length
+    #[serde(rename(serialize = "flagLen"))]
+    pub flag_len: u8,
+    /// Flag value
+    #[serde(rename(serialize = "flagsValue"))]
+    pub flags_value: u8,
+    /// Flag Recovery
+    #[serde(rename(serialize = "flagsRecovery"))]
+    pub flag_recovery: bool,
+    /// Flag Signed MCU code
+    #[serde(rename(serialize = "flagsSignedMCUCode"))]
+    pub flag_signed_mcu_code: bool,
+    /// Flag Onboarded
+    #[serde(rename(serialize = "flagsOnboarded"))]
+    pub flag_onboarded: bool,
+    /// Flag Pin Validated
+    #[serde(rename(serialize = "flagsPINValidated"))]
+    pub flag_pin_validated: bool,
+}
+
+
+impl TryFrom<&[u8]> for AppInfo {
+    type Error = DecodeError;
+
+    /// Parse an app info object from APDU response data
+    fn try_from(response_data: &[u8]) -> Result<Self, Self::Error> {
+
+        if response_data[0] != 1 {
+            return Err(DecodeError::InvalidFormatId(response_data[0]));
+        }
+
+        let app_name_len: usize = response_data[1] as usize;
+        let app_name_bytes = &response_data[2..app_name_len];
+
+        let mut idx = 2 + app_name_len;
+        let app_version_len: usize = response_data[idx] as usize;
+        idx += 1;
+        let app_version_bytes = &response_data[idx..idx + app_version_len];
+
+        idx += app_version_len;
+
+        let app_flags_len = response_data[idx];
+        idx += 1;
+        let flags_value = response_data[idx];
+
+        let app_name = str::from_utf8(app_name_bytes).map_err(DecodeError::Utf8)?;
+        let app_version = str::from_utf8(app_version_bytes).map_err(DecodeError::Utf8)?;
+
+        let app_info = AppInfo {
+            app_name: app_name.to_string(),
+            app_version: app_version.to_string(),
+            flag_len: app_flags_len,
+            flags_value,
+            flag_recovery: (flags_value & 1) != 0,
+            flag_signed_mcu_code: (flags_value & 2) != 0,
+            flag_onboarded: (flags_value & 4) != 0,
+            flag_pin_validated: (flags_value & 128) != 0,
+        };
+
+        Ok(app_info)
+    }
+}
+
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+/// App Device Info
+pub struct DeviceInfo {
+    /// Target ID
+    #[serde(rename(serialize = "targetId"))]
+    pub target_id: [u8; 4],
+    /// Secure Element Version
+    #[serde(rename(serialize = "seVersion"))]
+    pub se_version: String,
+    /// Device Flag
+    pub flag: Vec<u8>,
+    /// MCU Version
+    #[serde(rename(serialize = "mcuVersion"))]
+    pub mcu_version: String,
+}
+
+impl TryFrom<&[u8]> for DeviceInfo {
+    type Error = DecodeError;
+
+    /// Parse a device info object from APDU response data
+    fn try_from(response_data: &[u8]) -> Result<Self, Self::Error> {
+
+        let target_id_slice = &response_data[0..4];
+        let mut idx = 4;
+        let se_version_len: usize = response_data[idx] as usize;
+        idx += 1;
+        let se_version_bytes = &response_data[idx..idx + se_version_len];
+
+        idx += se_version_len;
+
+        let flags_len: usize = response_data[idx] as usize;
+        idx += 1;
+        let flag = &response_data[idx..idx + flags_len];
+        idx += flags_len;
+
+        let mcu_version_len: usize = response_data[idx] as usize;
+        idx += 1;
+        let mut tmp = &response_data[idx..idx + mcu_version_len];
+        if tmp[mcu_version_len - 1] == 0 {
+            tmp = &response_data[idx..idx + mcu_version_len - 1];
+        }
+
+        let mut target_id = [Default::default(); 4];
+        target_id.copy_from_slice(target_id_slice);
+
+        let se_version = str::from_utf8(se_version_bytes)
+            .map_err(DecodeError::Utf8)?;
+        let mcu_version = str::from_utf8(tmp)
+            .map_err(DecodeError::Utf8)?;
+
+        let device_info = DeviceInfo {
+            target_id,
+            se_version: se_version.to_string(),
+            flag: flag.to_vec(),
+            mcu_version: mcu_version.to_string(),
+        };
+
+        Ok(device_info)
+    }
+}
+
+/// Defines what we can consider an "App"
+pub trait App {
+    /// App's APDU CLA
+    const CLA: u8;
+}
+
+#[async_trait]
+/// Common commands for any given APP
+///
+/// This trait is automatically implemented for any type that implements [App]
+pub trait AppExt<E>: App
+where
+    E: Exchange + Send + Sync,
+    E::Error: std::error::Error,
+{
+    /// Retrieve the device info
+    ///
+    /// Works only in the dashboard
+    async fn get_device_info(transport: &E) -> Result<DeviceInfo, LedgerAppError<E::Error>> {
+        let command = APDUCommand {
+            cla: CLA_DEVICE_INFO,
+            ins: INS_DEVICE_INFO,
+            p1: 0x00,
+            p2: 0x00,
+            data: Vec::new(),
+        };
+
+        let response = transport.exchange(&command).await?;
+        match response.error_code() {
+            Ok(APDUErrorCode::NoError) => {}
+            Ok(err) => return Err(LedgerAppError::Unknown(err as _)),
+            Err(err) => return Err(LedgerAppError::Unknown(err)),
+        }
+
+        let response_data = response.data();
+
+        let device_info = DeviceInfo::try_from(response_data)
+            .map_err(|e| e.convert() )?;
+
+        Ok(device_info)
+    }
+
+    /// Retrieve the app info
+    ///
+    /// Works only in app (TOOD: dashboard support)
+    async fn get_app_info(transport: &E) -> Result<AppInfo, LedgerAppError<E::Error>> {
+        let command = APDUCommand {
+            cla: CLA_APP_INFO,
+            ins: INS_APP_INFO,
+            p1: 0x00,
+            p2: 0x00,
+            data: Vec::new(),
+        };
+
+        let response = transport.exchange(&command).await?;
+        match response.error_code() {
+            Ok(APDUErrorCode::NoError) => {}
+            Ok(err) => return Err(LedgerAppError::AppSpecific(err as _, err.description())),
+            Err(err) => return Err(LedgerAppError::Unknown(err as _)),
+        }
+
+        let response_data = response.data();
+
+        let app_info = AppInfo::try_from(response_data)
+            .map_err(|e| e.convert() )?;
+
+        Ok(app_info)
+    }
+
+    /// Retrieve the app version
+    async fn get_version(transport: &E) -> Result<Version, LedgerAppError<E::Error>> {
+        let command = APDUCommand {
+            cla: Self::CLA,
+            ins: INS_GET_VERSION,
+            p1: 0x00,
+            p2: 0x00,
+            data: Vec::new(),
+        };
+
+        let response = transport.exchange(&command).await?;
+        match response.error_code() {
+            Ok(APDUErrorCode::NoError) => {}
+            Ok(err) => return Err(LedgerAppError::Unknown(err as _)),
+            Err(err) => return Err(LedgerAppError::Unknown(err)),
+        }
+
+        let response_data = response.data();
+
+        let version = Version::try_from(response_data)
+            .map_err(|e| e.convert() )?;
+
         Ok(version)
     }
 
