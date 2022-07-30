@@ -107,7 +107,6 @@ where
         Err(err) => return Err(anyhow::anyhow!("unknown APDU response: {:?}", err)),
     }
 
-
     // Handle response ADPU
     let response_data = response.data();
     log::debug!("response data: {:?}", response_data);

@@ -5,9 +5,6 @@ pub enum Error {
     #[error("IO error {:?}", 0)]
     Io(std::io::Error),
 
-    #[error("Connection failed: {:?}", 0)]
-    Connection(std::io::Error),
-
     #[error("Command timeout")]
     Timeout,
 

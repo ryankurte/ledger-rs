@@ -192,7 +192,7 @@ impl TryFrom<&[u8]> for AppInfo {
         }
 
         let app_name_len: usize = response_data[1] as usize;
-        let app_name_bytes = &response_data[2..app_name_len];
+        let app_name_bytes = &response_data[2..][..app_name_len];
 
         let mut idx = 2 + app_name_len;
         let app_version_len: usize = response_data[idx] as usize;
